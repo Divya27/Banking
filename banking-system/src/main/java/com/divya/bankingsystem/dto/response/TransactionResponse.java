@@ -18,7 +18,7 @@ public class TransactionResponse {
     private Double amount;
     private String status;
     private String type;
-    private Transaction.TransactionCategory transactionCategory;
+    private Transaction.TransactionCategory category;
     private String description;
     private LocalDateTime timestamp;
 

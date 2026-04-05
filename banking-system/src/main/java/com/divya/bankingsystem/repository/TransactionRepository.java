@@ -8,6 +8,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 @Repository
@@ -35,4 +36,11 @@ public interface TransactionRepository extends JpaRepository<Transaction, Long> 
        ORDER BY t.timestamp DESC
        """)
     Page<Transaction> findByAccountIds(List<Long> accountIds, Pageable pageable);
+
+    // spring JPA reads method name and automatically generates SQL query
+    List<Transaction> findByFromAccountIdOrToAccountIdAndTimestampAfterOrderByTimestampDesc(
+            Long fromAccountId,
+            Long toAccountId,
+            LocalDateTime after
+    );
 }

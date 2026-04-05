@@ -9,7 +9,9 @@ import com.divya.bankingsystem.repository.AccountRepository;
 import com.divya.bankingsystem.repository.TransactionRepository;
 import com.divya.bankingsystem.repository.UserRepository;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
@@ -76,6 +78,8 @@ public class TransactionService {
 
         response.setAmount(transaction.getAmount());
         response.setType(transaction.getType().name());
+        response.setCategory(transaction.getCategory());
+        response.setDescription(transaction.getDescription());
         response.setTimestamp(transaction.getTimestamp());
 
         return response;
@@ -115,8 +119,14 @@ public class TransactionService {
         accountRepository.findByIdAndUserId(accountId, user.getId())
                 .orElseThrow(() -> new RuntimeException("Account not found for user"));
 
+        Pageable sortedPageable = PageRequest.of(
+                pageable.getPageNumber(),
+                pageable.getPageSize(),
+                Sort.by(Sort.Direction.DESC, "timestamp")
+        );
+
         Page<Transaction> transactions =
-                transactionRepository.findAllByAccountId(accountId, pageable);
+                transactionRepository.findAllByAccountId(accountId, sortedPageable);
 
         return transactions.map(this::mapToResponse);
     }

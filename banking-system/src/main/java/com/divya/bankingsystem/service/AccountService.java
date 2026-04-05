@@ -114,7 +114,7 @@ public class AccountService {
         depositResponse.setBalance(depositedAccount.getBalance());
 
         // record transaction
-        transactionService.recordTransaction(null, id, amount, Transaction.TransactionType.DEPOSIT, null, null);
+        transactionService.recordTransaction(null, id, amount, Transaction.TransactionType.DEPOSIT, request.getCategory(), request.getDescription());
 
         return depositResponse;
 
@@ -144,7 +144,7 @@ public class AccountService {
         withdrawalResponse.setBalance(withdrawnAccount.getBalance());
 
         // record a transaction
-        transactionService.recordTransaction(id, null, amount, Transaction.TransactionType.WITHDRAW, null, null);
+        transactionService.recordTransaction(id, null, amount, Transaction.TransactionType.WITHDRAW, request.getCategory(), request.getDescription());
 
         return withdrawalResponse;
     }
@@ -175,7 +175,7 @@ public class AccountService {
         transactionResponse.setToAccountId(destinationAccount.getId());
         transactionResponse.setAmount(request.getAmount());
         transactionResponse.setType(Transaction.TransactionType.TRANSFER.name());
-        transactionResponse.setTransactionCategory(request.getCategory());
+        transactionResponse.setCategory(request.getCategory());
         transactionResponse.setDescription(request.getDescription());
         transactionResponse.setStatus("SUCCESS");
         transactionResponse.setTimestamp(LocalDateTime.now());
