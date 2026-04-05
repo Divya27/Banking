@@ -121,6 +121,11 @@ export default function AccountDetail() {
     setModal(null);
     setModalError("");
     setModalSuccess("");
+    setModalLoading(false);
+    setAmount("");
+    setCategory("OTHER");
+    setDescription("");
+    setToAccountId("");
   };
 
   const handleModalSubmit = async () => {
@@ -224,13 +229,15 @@ export default function AccountDetail() {
 
             if (result.success) {
               setModalSuccess(`Payment successful! ₹${amount} deposited.`);
-              await fetchData(); // refresh balance + transactions
+              await fetchData();
               setTimeout(() => closeModal(), 1500);
             } else {
               setModalError("Payment verification failed.");
+              setModalLoading(false);
             }
           } catch (err) {
             setModalError("Verification error. Contact support.", err);
+            setModalLoading(false);
           }
         },
 
