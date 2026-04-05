@@ -148,3 +148,64 @@ export const getTransactionsByAccountId = async (accountId, page = 0, size = 5) 
   });
   return response.json();
 };
+
+// ============================================================
+// PAYMENT — Razorpay
+// ============================================================
+
+// POST /api/payment/create-order
+// Step 1 — creates a Razorpay order on Spring Boot
+// Returns { orderId, amount, currency, keyId }
+export const createPaymentOrder = async (accountId, amount) => {
+  const response = await fetch(`${BASE_URL}/payment/create-order`, {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify({
+      accountId,
+      amount,
+      currency: "INR",
+    }),
+  });
+  return response.json();
+};
+
+// POST /api/payment/verify
+// Step 2 — verifies payment after user completes Razorpay popup
+// Also updates balance via deposit API on Spring Boot
+export const verifyPayment = async (
+  razorpay_order_id,
+  razorpay_payment_id,
+  razorpay_signature,
+  accountId,
+  amount,
+  category,
+  description
+) => {
+  const response = await fetch(`${BASE_URL}/payment/verify`, {
+    method: "POST",
+    headers: getHeaders(),
+    body: JSON.stringify({
+      razorpay_order_id,
+      razorpay_payment_id,
+      razorpay_signature,
+      accountId,
+      amount,
+      category,
+      description,
+    }),
+  });
+  return response.json();
+};
+
+// ============================================================
+// GET /api/insights/{accountId}
+// Spring Boot fetches transactions → calls Claude → returns insights
+// Returns { insights: "...", status: "success|rate_limit|error|no_data|no_categories" }
+// ============================================================
+export const getAiInsights = async (accountId) => {
+  const response = await fetch(`${BASE_URL}/insights/${accountId}`, {
+    method: "GET",
+    headers: getHeaders(),
+  });
+  return response.json();
+};

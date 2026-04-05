@@ -3,12 +3,17 @@
 import { useState, useEffect } from "react";
 import { useParams } from "react-router-dom";
 import Navbar from "../components/Navbar";
+import SpendingInsights from "../components/SpendingInsights";
+
 import {
   getAccount,
   deposit,
   withdraw,
   transfer,
-  getTransactionsByAccountId
+  getTransactionsByAccountId,
+  createPaymentOrder,
+  verifyPayment,
+  getAiInsights
 } from "../services/api";
 
 // ============================================================
@@ -33,6 +38,17 @@ export default function AccountDetail() {
   const [darkMode, setDarkMode] = useState(
     () => localStorage.getItem("darkMode") === "true"
   );
+  // AI insights state
+  const [aiInsights, setAiInsights] = useState("");
+  // idle     → not started yet
+  // loading  → waiting for Claude
+  // success  → insights received
+  // rate_limit → free tier exhausted
+  // no_data  → no transactions in 30 days
+  // no_categories → no categorized transactions
+  // error    → something went wrong
+  const [aiStatus, setAiStatus] = useState("idle");
+
 
   // Pagination state
   const [currentPage, setCurrentPage] = useState(0);  // Spring Boot pages start at 0
@@ -65,7 +81,6 @@ export default function AccountDetail() {
     setLoading(true);
     setError("");
     try {
-      // Fetch account details + transactions in parallel
       const [accountData, txData] = await Promise.all([
         getAccount(id),
         getTransactionsByAccountId(id, currentPage, PAGE_SIZE),
@@ -75,6 +90,13 @@ export default function AccountDetail() {
       setTransactions(txData.content || []);
       setTotalPages(txData.totalPages || 0);
       setTotalElements(txData.totalElements || 0);
+
+      // Only fetch AI insights on first page load
+      // Not on every pagination click — saves API calls
+      if (currentPage === 0) {
+        fetchAiInsights(); // ← runs in background, doesn't block page load
+      }
+
     } catch (err) {
       setError("Failed to load account details.", err);
     } finally {
@@ -121,6 +143,10 @@ export default function AccountDetail() {
       let result;
 
       if (modal === "deposit") {
+        /**
+         * Before → deposit modal → calls deposit API directly
+            After  → deposit modal → creates Razorpay order → opens popup → verifies → updates balance
+         */
         result = await deposit(id, Number(amount), category, description);
         setModalSuccess(`Successfully deposited ${formatAmount(Number(amount))}`);
       } else if (modal === "withdraw") {
@@ -139,6 +165,125 @@ export default function AccountDetail() {
       setModalError("Transaction failed. Please try again.", err);
     } finally {
       setModalLoading(false);
+    }
+  };
+
+  // ============================================================
+  // RAZORPAY DEPOSIT FLOW
+  // Replaces direct deposit API call with Razorpay payment
+  // ============================================================
+  const handleRazorpayDeposit = async () => {
+    setModalError("");
+    setModalSuccess("");
+
+    // Validation
+    if (!amount || isNaN(amount) || Number(amount) <= 0) {
+      setModalError("Please enter a valid amount.");
+      return;
+    }
+
+    setModalLoading(true);
+
+    try {
+      // STEP 1 — Create order on Spring Boot
+      // Spring Boot calls Razorpay API and returns orderId
+      const order = await createPaymentOrder(id, Number(amount));
+
+      if (!order.orderId) {
+        setModalError("Failed to create payment order. Try again.");
+        setModalLoading(false);
+        return;
+      }
+
+      // STEP 2 — Open Razorpay checkout popup
+      // window.Razorpay as added the script in index.html
+      const options = {
+        key: order.keyId,              // rzp_test_xxxx — from Spring Boot response
+        amount: order.amount,          // in paise — Razorpay handles display
+        currency: order.currency,      // INR
+        name: "NeoBank",               // shown in popup header
+        description: description || `Deposit to Account #${id}`,
+        order_id: order.orderId,       // rzp_order_xxxx — links payment to order
+
+        // STEP 3 — Called when user completes payment successfully
+        handler: async (response) => {
+          try {
+            // response contains:
+            // razorpay_payment_id → unique payment ID
+            // razorpay_order_id   → matches our order
+            // razorpay_signature  → we verify this on Spring Boot
+            const result = await verifyPayment(
+              response.razorpay_order_id,
+              response.razorpay_payment_id,
+              response.razorpay_signature,
+              Number(id),
+              Number(amount),
+              category,
+              description
+            );
+
+            if (result.success) {
+              setModalSuccess(`Payment successful! ₹${amount} deposited.`);
+              await fetchData(); // refresh balance + transactions
+              setTimeout(() => closeModal(), 1500);
+            } else {
+              setModalError("Payment verification failed.");
+            }
+          } catch (err) {
+            setModalError("Verification error. Contact support.", err);
+          }
+        },
+
+        // Called when user closes the popup without paying
+        modal: {
+          ondismiss: () => {
+            setModalLoading(false);
+            setModalError("Payment cancelled.");
+          },
+        },
+
+        // Pre-fill user details in Razorpay popup
+        prefill: {
+          name: account?.accountHolderName || "",
+          email: "",  // optional — add if you have it
+        },
+
+        // Razorpay popup theme
+        theme: {
+          color: "#1D9E75", // matches your app's green
+        },
+      };
+
+      // Open the Razorpay popup
+      const razorpay = new window.Razorpay(options);
+      razorpay.open();
+
+    } catch (err) {
+      setModalError("Cannot reach server. Is Spring Boot running?", err);
+      setModalLoading(false);
+    }
+  };
+
+  // ============================================================
+  // FETCH AI INSIGHTS
+  // Calls Spring Boot → Spring Boot calls Claude
+  // Only runs on first page load (currentPage === 0)
+  // ============================================================
+  const fetchAiInsights = async () => {
+    setAiStatus("loading");
+    try {
+      // Returns { insights: "...", status: "success|rate_limit|..." }
+      const data = await getAiInsights(id);
+
+      // Update state based on status from Spring Boot
+      setAiStatus(data.status);
+      setAiInsights(data.insights || "");
+
+    } catch (err) {
+      // Network error — Spring Boot not reachable
+      console.error("AI insights error:", err);
+      setAiStatus("error");
+      setAiInsights("");
     }
   };
 
@@ -305,10 +450,10 @@ export default function AccountDetail() {
           </div>
         )}
 
-        {/* ── STATS + CATEGORY CHART ── */}
+        {/* ── STATS + SPENDING INSIGHTS ── */}
         <div className="grid grid-cols-2 gap-4 mb-4">
 
-          {/* Stats */}
+          {/* Left — account stats */}
           <div className={`rounded-xl border p-4 ${card}`}>
             <div className="flex items-center justify-between mb-3">
               <h2 className={`text-sm font-medium ${text}`}>Account stats</h2>
@@ -329,41 +474,14 @@ export default function AccountDetail() {
             </div>
           </div>
 
-          {/* Category chart */}
-          <div className={`rounded-xl border p-4 ${card}`}>
-            <div className="flex items-center justify-between mb-3">
-              <h2 className={`text-sm font-medium ${text}`}>Spending breakdown</h2>
-              <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-100">AI</span>
-            </div>
-            {categories.length === 0 ? (
-              <p className={`text-xs ${muted}`}>
-                No categorized transactions yet.
-              </p>
-            ) : (
-              <div className="space-y-2.5">
-                {categories.map((cat) => {
-                  const color = catColors[cat.name] || "#94a3b8";
-                  return (
-                    <div key={cat.name} className="flex items-center gap-2">
-                      <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: color }} />
-                      <span className={`text-xs w-20 flex-shrink-0 ${muted}`}>
-                        {cat.name.charAt(0) + cat.name.slice(1).toLowerCase()}
-                      </span>
-                      <div className={`flex-1 h-1.5 rounded-full ${statBg}`}>
-                        <div
-                          className="h-full rounded-full transition-all duration-500"
-                          style={{ width: `${cat.percent}%`, background: color }}
-                        />
-                      </div>
-                      <span className={`text-xs font-medium w-7 text-right ${text}`}>
-                        {cat.percent}%
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
+          {/* Right — donut chart + AI insights */}
+          <SpendingInsights
+            transactions={transactions}
+            darkMode={darkMode}
+            aiInsights={aiInsights}
+            aiStatus={aiStatus}
+          />
+
         </div>
 
         {/* ── TRANSACTIONS LIST ── */}
@@ -599,7 +717,7 @@ export default function AccountDetail() {
 
             {/* Submit button */}
             <button
-              onClick={handleModalSubmit}
+              onClick={modal === "deposit" ? handleRazorpayDeposit : handleModalSubmit}
               disabled={modalLoading}
               className={`w-full py-3 rounded-xl text-sm font-medium text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${modal === "withdraw"
                 ? "bg-red-500 hover:bg-red-600"
@@ -610,7 +728,7 @@ export default function AccountDetail() {
             >
               {modalLoading
                 ? "Processing..."
-                : modal === "deposit" ? "Confirm Deposit"
+                : modal === "deposit" ? "Pay with Razorpay"  // ← updated label
                   : modal === "withdraw" ? "Confirm Withdraw"
                     : "Confirm Transfer"
               }
