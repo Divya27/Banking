@@ -11,8 +11,8 @@ import java.util.Map;
 @Service
 public class InsightService {
 
-  @Value("${claude.api.key}")
-  private String claudeApiKey;
+  @Value("${groq.api.key}")
+  private String groqApiKey;
 
   private final OkHttpClient httpClient = new OkHttpClient();
 
@@ -32,27 +32,42 @@ public class InsightService {
           List<Map<String, Object>> transactions) throws Exception {
 
     String prompt = String.format("""
-                You are a personal finance advisor for NeoBank, an Indian banking app.
-                Analyse these transactions for %s and give exactly 2 short insights.
+                    You are a personal finance advisor for NeoBank.
+                    Analyse these transactions for %s and give exactly 3 insights with brief suggestions.
+        
+                    Transactions (last 30 days):
+                    %s
+        
+                    Give these 3 specific insights in this exact order:
+                    
+                    Line 1 — TOP CATEGORY: Which category has the highest total spend?
+                    Show category name, percentage of total spend, and total amount.
+                    Example: "You spent 65%% on Food (₹960) this month — consider setting a monthly budget."
+        
+                    Line 2 — BIGGEST TRANSACTION: What was the single largest transaction?
+                    Show amount, type (deposit/withdrawal), and description if available.
+                    Example: "Your largest transaction was ₹1,000 withdrawn for stocks — a solid long-term investment."
+        
+                    Line 3 — SAVINGS SIGNAL: Compare total deposits vs total withdrawals.
+                    Tell user if they are in surplus or deficit and by how much.
+                    Example: "You received ₹423 but spent ₹1,000 — you have a deficit of ₹577 this month."
 
-                Transactions (last 30 days):
-                %s
-
-                Rules:
-                - Each insight must be 1-2 sentences only
-                - Use Indian Rupee format (₹)
-                - Be specific with amounts from the data
-                - Be friendly and practical
-                - Focus on biggest spend category or saving suggestions
-                - Return plain text only — no markdown, no bullet points
-                - Separate the two insights with a single newline
+                    Rules:
+                    - Each insight must be exactly ONE sentence — max 20 words
+                    - Always mention the actual ₹ amount
+                    - Update the case of category names — Food not FOOD
+                    - No decimals in amounts — ₹1,000 not ₹1,000.0
+                    - End each sentence with a period
+                    - Be specific, helpful and friendly
+                    - Plain text only — no bullets, no markdown, no numbering
+                    - Separate each insight with a single newline
                 """,
             accountHolderName,
             objectMapper.writeValueAsString(transactions)
     );
 
     Map<String, Object> requestBody = Map.of(
-            "model",      "claude-sonnet-4-20250514",
+            "model",      "llama-3.3-70b-versatile",
             "max_tokens", 300,
             "messages",   List.of(
                     Map.of("role", "user", "content", prompt)
@@ -60,17 +75,16 @@ public class InsightService {
     );
 
     Request request = new Request.Builder()
-            .url("https://api.anthropic.com/v1/messages")
+            .url("https://api.groq.com/openai/v1/chat/completions")
             .post(RequestBody.create(
                     MediaType.parse("application/json"),
                     objectMapper.writeValueAsString(requestBody)
             ))
-            .addHeader("x-api-key",claudeApiKey)
-            .addHeader("anthropic-version", "2023-06-01")
+            .addHeader("Authorization", "Bearer " + groqApiKey)
             .addHeader("Content-Type",       "application/json")
             .build();
 
-    // .executes() below is the blocking call, thread waits for the response from claude
+    // .executes() below is the blocking call, thread waits for the response from claude/groq
     try (Response response = httpClient.newCall(request).execute()) {
 
       System.out.println("Response :"+response);
@@ -103,16 +117,32 @@ public class InsightService {
        *   "model": "claude-sonnet-4-20250514",
        *   "usage": { "input_tokens": 245, "output_tokens": 48 }
        * }
+       *
+       * // ============================================================
+       *             // Groq response format (OpenAI compatible):
+       *             // {
+       *             //   "choices": [
+       *             //     {
+       *             //       "message": {
+       *             //         "role": "assistant",
+       *             //         "content": "Your insights here..."
+       *             //       }
+       *             //     }
+       *             //   ]
+       *             // }
        */
       // converts json string into java map
       Map<String, Object> parsed = objectMapper.readValue(
               responseBody, Map.class
       );
 
-      List<Map<String, Object>> content =
-              (List<Map<String, Object>>) parsed.get("content");
+      List<Map<String, Object>> choices =
+              (List<Map<String, Object>>) parsed.get("choices");
 
-      return content.get(0).get("text").toString();
+      Map<String, Object> message =
+              (Map<String, Object>) choices.get(0).get("message");
+
+      return message.get("content").toString();
     }
   }
 }
